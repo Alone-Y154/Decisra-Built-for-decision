@@ -10,7 +10,7 @@ export function SessionSharePanel({ sessionId }: SessionSharePanelProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    const url = `${window.location.origin}/sessions/${sessionId}`;
+    const url = `${window.location.origin}/session/${sessionId}`;
     navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -21,7 +21,7 @@ export function SessionSharePanel({ sessionId }: SessionSharePanelProps) {
       <h3 className="font-semibold mb-4">Share This Session</h3>
       <div className="space-y-3">
         <div className="p-3 rounded-lg bg-background/50 break-all text-xs">
-          /sessions/{sessionId}
+          /session/{sessionId}
         </div>
         <Button onClick={handleCopy} size="sm" variant="outline" className="w-full">
           {copied ? (

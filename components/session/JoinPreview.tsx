@@ -2,18 +2,22 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Mic, Headphones, ChevronDown, ChevronUp } from "lucide-react";
-import type { Session } from "@/app/sessions/[sessionId]/page";
+import type { Session } from "@/lib/types/session";
 
 interface JoinPreviewProps {
   session: Session;
   onJoin: (role: "participant" | "observer", name?: string) => void;
   isHost: boolean;
+  isJoining?: boolean;
+  error?: string | null;
 }
 
 export function JoinPreview({
   session,
   onJoin,
   isHost,
+  isJoining = false,
+  error = null,
 }: JoinPreviewProps) {
   const [selectedRole, setSelectedRole] = useState<
     "participant" | "observer" | null
@@ -29,13 +33,18 @@ export function JoinPreview({
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-6">
       <div className="w-full max-w-md space-y-8">
+        {error && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+            {error}
+          </div>
+        )}
         {/* Session Type Indicator */}
         <div className="text-sm text-muted-foreground">
           {session.type === "normal" ? "Normal Session" : "Verdict Session"}
         </div>
 
         {/* Preview Copy */}
-        <p className="text-foreground">You're about to join a live session.</p>
+        <p className="text-foreground">You&apos;re about to join a live session.</p>
 
         {/* Decision Scope (Verdict Only) */}
         {session.type === "verdict" && session.scope && (
@@ -75,69 +84,75 @@ export function JoinPreview({
           </div>
         )}
 
-        {/* Role Selection Section */}
-        <div className="space-y-4">
-          <p className="text-foreground">How would you like to join?</p>
+        {!isHost && (
+          <>
+            {/* Role Selection Section */}
+            <div className="space-y-4">
+              <p className="text-foreground">How would you like to join?</p>
 
-          {/* Participate Option */}
-          <button
-            onClick={() => setSelectedRole("participant")}
-            className={`w-full hello p-4 rounded-lg border transition-all text-left ${
-              selectedRole === "participant"
-                ? "border-primary bg-primary/5"
-                : "border-border hover:border-muted-foreground/50"
-            }`}
-            type="button"
-          >
-            <div className="flex items-start gap-3">
-              <Mic className="h-5 w-5 text-muted-foreground mt-0.5" />
-              <div className="space-y-2">
-                <p className="font-medium text-foreground">Participate</p>
-                <p className="text-sm text-muted-foreground">
-                  Speak and take part in the conversation.
-                </p>
-                <ul className="text-xs text-muted-foreground space-y-1">
-                  <li>• Mic enabled</li>
-                  <li>• Can contribute actively</li>
-                  {session.type === "verdict" && (
-                    <li>• In Verdict sessions, can use scoped AI</li>
-                  )}
-                </ul>
-              </div>
+              {/* Participate Option */}
+              <button
+                onClick={() => setSelectedRole("participant")}
+                disabled={isJoining}
+                className={`w-full hello p-4 rounded-lg border transition-all text-left ${
+                  selectedRole === "participant"
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-muted-foreground/50"
+                }`}
+                type="button"
+              >
+                <div className="flex items-start gap-3">
+                  <Mic className="h-5 w-5 text-muted-foreground mt-0.5" />
+                  <div className="space-y-2">
+                    <p className="font-medium text-foreground">Participate</p>
+                    <p className="text-sm text-muted-foreground">
+                      Speak and take part in the conversation.
+                    </p>
+                    <ul className="text-xs text-muted-foreground space-y-1">
+                      <li>• Mic enabled</li>
+                      <li>• Can contribute actively</li>
+                      {session.type === "verdict" && (
+                        <li>• In Verdict sessions, can use scoped AI</li>
+                      )}
+                    </ul>
+                  </div>
+                </div>
+              </button>
+
+              {/* Observe Option */}
+              <button
+                onClick={() => setSelectedRole("observer")}
+                disabled={isJoining}
+                className={`w-full p-4 rounded-lg border transition-all text-left ${
+                  selectedRole === "observer"
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-muted-foreground/50"
+                }`}
+                type="button"
+              >
+                <div className="flex items-start gap-3">
+                  <Headphones className="h-5 w-5 text-muted-foreground mt-0.5" />
+                  <div className="space-y-2">
+                    <p className="font-medium text-foreground">Observe</p>
+                    <p className="text-sm text-muted-foreground">
+                      Listen without speaking.
+                    </p>
+                    <ul className="text-xs text-muted-foreground space-y-1">
+                      <li>• Mic disabled</li>
+                      <li>• No AI access</li>
+                      <li>• You&apos;ll be visible as an observer</li>
+                    </ul>
+                  </div>
+                </div>
+              </button>
+
+              {/* Role Lock Note */}
+              <p className="text-xs text-muted-foreground">
+                You won&apos;t be able to switch roles later.
+              </p>
             </div>
-          </button>
-
-          {/* Observe Option */}
-          <button
-            onClick={() => setSelectedRole("observer")}
-            className={`w-full p-4 rounded-lg border transition-all text-left ${
-              selectedRole === "observer"
-                ? "border-primary bg-primary/5"
-                : "border-border hover:border-muted-foreground/50"
-            }`}
-            type="button"
-          >
-            <div className="flex items-start gap-3">
-              <Headphones className="h-5 w-5 text-muted-foreground mt-0.5" />
-              <div className="space-y-2">
-                <p className="font-medium text-foreground">Observe</p>
-                <p className="text-sm text-muted-foreground">
-                  Listen without speaking.
-                </p>
-                <ul className="text-xs text-muted-foreground space-y-1">
-                  <li>• Mic disabled</li>
-                  <li>• No AI access</li>
-                  <li>• You'll be visible as an observer</li>
-                </ul>
-              </div>
-            </div>
-          </button>
-
-          {/* Role Lock Note */}
-          <p className="text-xs text-muted-foreground">
-            You won't be able to switch roles later.
-          </p>
-        </div>
+          </>
+        )}
 
         {/* Display Name Input */}
         <div className="space-y-2">
@@ -153,8 +168,14 @@ export function JoinPreview({
         </div>
 
         {/* Primary CTA */}
-        <Button onClick={handleJoin} disabled={!selectedRole} className="w-full" size="lg" variant="hero">
-          Join Session
+        <Button
+          onClick={handleJoin}
+          disabled={!selectedRole || isJoining}
+          className="w-full"
+          size="lg"
+          variant="hero"
+        >
+          {isJoining ? "Joining..." : "Join Session"}
         </Button>
 
         {/* Footer Copy */}

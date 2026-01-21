@@ -107,7 +107,7 @@ export default function ContactPage() {
               </p>
               <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
                 <Button asChild variant="hero">
-                  <Link href="/sessions/new">Start a Session</Link>
+                  <Link href="/session/new">Start a Session</Link>
                 </Button>
                 <Button asChild variant="outline">
                   <Link href="/">Back to Home</Link>
@@ -399,7 +399,7 @@ export default function ContactPage() {
             </h2>
             <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
               <Button asChild variant="hero" size="lg">
-                <Link href="/sessions/new">Start a Session</Link>
+                <Link href="/session/new">Start a Session</Link>
               </Button>
               <Button asChild variant="outline" size="lg">
                 <Link href="/pricing">View Pricing</Link>

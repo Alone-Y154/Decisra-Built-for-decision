@@ -284,7 +284,7 @@ export default function About() {
             </p>
             <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
               <Button asChild variant="hero" size="lg">
-                <Link href="/sessions/new">Start a Session</Link>
+                <Link href="/session/new">Start a Session</Link>
               </Button>
               <Button asChild variant="outline" size="lg">
                 <Link href="/contact">Contact Us</Link>

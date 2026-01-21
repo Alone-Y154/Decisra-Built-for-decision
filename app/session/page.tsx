@@ -15,7 +15,7 @@ export default function SessionsIndexPage() {
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <Button asChild variant="hero" size="lg">
-              <Link href="/sessions/new">Start a Session</Link>
+              <Link href="/session/new">Start a Session</Link>
             </Button>
             <Button asChild variant="outline" size="lg">
               <Link href="/session-types">Learn about session types</Link>

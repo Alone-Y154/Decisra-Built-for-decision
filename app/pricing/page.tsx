@@ -42,7 +42,7 @@ const tiers: Tier[] = [
       { text: "No account required", available: true },
     ],
     cta: "Start a Session",
-    ctaLink: "/sessions/new",
+    ctaLink: "/session/new",
     current: true,
   },
   {

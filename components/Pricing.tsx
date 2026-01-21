@@ -126,7 +126,7 @@ const Pricing = () => {
               </ul>
 
               {tier.current ? (
-                <Link href="/sessions/new" className="mt-8 block">
+                <Link href="/session/new" className="mt-8 block">
                   <Button className="w-full" variant="hero">
                     Start Free
                   </Button>

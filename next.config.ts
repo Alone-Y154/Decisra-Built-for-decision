@@ -5,12 +5,17 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/start-session",
-        destination: "/sessions/new",
+        destination: "/session/new",
         permanent: true,
       },
       {
-        source: "/session/:sessionId",
-        destination: "/sessions/:sessionId",
+        source: "/sessions/new",
+        destination: "/session/new",
+        permanent: true,
+      },
+      {
+        source: "/sessions/:sessionId",
+        destination: "/session/:sessionId",
         permanent: true,
       },
     ];

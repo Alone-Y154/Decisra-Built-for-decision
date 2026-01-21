@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import type { Session } from "@/app/sessions/[sessionId]/page";
+import type { Session } from "@/lib/types/session";
 
 interface SessionHeaderProps {
   session: Session;

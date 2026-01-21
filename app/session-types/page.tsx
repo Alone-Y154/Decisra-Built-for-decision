@@ -32,7 +32,7 @@ export default function SessionTypesPage() {
               </p>
             </div>
             <Button asChild variant="hero" size="lg">
-              <Link href="/sessions/new">Start a Session</Link>
+              <Link href="/session/new">Start a Session</Link>
             </Button>
           </div>
         </div>
@@ -457,7 +457,7 @@ export default function SessionTypesPage() {
             </h2>
             <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
               <Button asChild variant="hero" size="lg">
-                <Link href="/sessions/new">Start a Session</Link>
+                <Link href="/session/new">Start a Session</Link>
               </Button>
               <Button asChild variant="outline" size="lg">
                 <Link href="/pricing">View Pricing (Early Access)</Link>

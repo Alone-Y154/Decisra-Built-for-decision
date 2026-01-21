@@ -37,7 +37,7 @@ export default function Home() {
 
           <div className="mt-10 flex animate-fade-in-up flex-col gap-4 sm:flex-row" style={{ animationDelay: '0.3s' }}>
             <Button asChild variant="hero" size="xl">
-              <Link href="/sessions/new">
+              <Link href="/session/new">
                 Start a Session
                 <ArrowRight className="h-5 w-5" />
               </Link>
@@ -590,7 +590,7 @@ export default function Home() {
                 </ul>
 
                 {tier.current ? (
-                  <Link href="/sessions/new" className="mt-8 block">
+                  <Link href="/session/new" className="mt-8 block">
                     <Button className="w-full" variant="hero">
                       Start Free
                     </Button>
@@ -638,7 +638,7 @@ export default function Home() {
 
             <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
               <Button asChild size="lg" variant="hero">
-                <Link href="/sessions/new">
+                <Link href="/session/new">
                   Start a Session
                   <ArrowRight className="h-5 w-5" />
                 </Link>

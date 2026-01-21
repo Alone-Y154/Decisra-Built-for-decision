@@ -17,7 +17,7 @@ The app includes marketing-style pages (About, How it Works, Pricing, Contact, L
 ### Start a session
 From the CTA buttons, you can start a session at:
 
-- `/sessions/new`
+- `/session/new`
 
 You can create:
 - **Normal session**: no scope required.
@@ -28,7 +28,7 @@ Starting a session generates a simple session id (e.g. `n...` or `v...`) and rou
 ### Join a live session room
 Live session rooms are served at:
 
-- `/sessions/[sessionId]`
+- `/session/[sessionId]`
 
 The UI includes:
 - Join preview (role selection: participant/observer)
@@ -50,12 +50,12 @@ Core routes:
 - `/session-types` – Explains Normal vs Verdict sessions
 
 Session routes:
-- `/sessions` – Sessions index
-- `/sessions/new` – Start/create a session
-- `/sessions/[sessionId]` – Live session room
+- `/session` – Sessions index
+- `/session/new` – Start/create a session
+- `/session/[sessionId]` – Live session room
 
 Legacy compatibility:
-- Requests to `/start-session` and `/session/:sessionId` are redirected to the canonical `/sessions/*` routes.
+- Requests to `/start-session` and `/sessions/*` are redirected to the canonical `/session/*` routes.
 	See `next.config.ts`.
 
 ## Tech Stack
@@ -71,8 +71,8 @@ State management scaffolding exists via Redux Toolkit in `lib/store.ts` (not cen
 ## Project Structure (High Level)
 
 - `app/*` – Next.js App Router routes (pages)
-	- `app/sessions/new/page.tsx` – start session flow
-	- `app/sessions/[sessionId]/page.tsx` – live session room
+	- `app/session/new/page.tsx` – start session flow
+	- `app/session/[sessionId]/page.tsx` – live session room
 - `components/session/*` – live session UI building blocks
 - `components/ui/*` – small reusable UI primitives (button, input, textarea, etc.)
 - `lib/*` – utilities and store setup

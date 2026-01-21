@@ -52,7 +52,7 @@ const Header = () => {
             Contact
           </Link>
           <Button asChild variant="hero" size="sm">
-            <Link href="/sessions/new">Start a Session</Link>
+            <Link href="/session/new">Start a Session</Link>
           </Button>
         </div>
       </div>
