@@ -44,7 +44,11 @@ export function JoinPreview({
         </div>
 
         {/* Preview Copy */}
-        <p className="text-foreground">You&apos;re about to join a live session.</p>
+        <p className="text-foreground">
+          {isHost
+            ? "You can enter immediately as the host."
+            : "Request access to join this live session."}
+        </p>
 
         {/* Decision Scope (Verdict Only) */}
         {session.type === "verdict" && session.scope && (
@@ -175,7 +179,13 @@ export function JoinPreview({
           size="lg"
           variant="hero"
         >
-          {isJoining ? "Joining..." : "Join Session"}
+          {isJoining
+            ? isHost
+              ? "Entering..."
+              : "Requesting..."
+            : isHost
+              ? "Enter as Host"
+              : "Request to Join"}
         </Button>
 
         {/* Footer Copy */}

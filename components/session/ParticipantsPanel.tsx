@@ -9,11 +9,13 @@ interface Participant {
 interface ParticipantsPanelProps {
   userRole: "host" | "participant" | "observer" | null;
   displayName: string;
+  participants?: Participant[];
 }
 
 export function ParticipantsPanel({
   userRole,
   displayName,
+  participants,
 }: ParticipantsPanelProps) {
   const getRoleIcon = (role: Participant["role"]) => {
     switch (role) {
@@ -37,30 +39,34 @@ export function ParticipantsPanel({
     }
   };
 
-  const currentUser: Participant = {
+  const fallbackCurrentUser: Participant = {
     id: "self",
     name: displayName || "You",
     role: userRole || "participant",
   };
+
+  const list = participants && participants.length > 0 ? participants : [fallbackCurrentUser];
 
   return (
     <div className="bg-card border border-border rounded-lg p-4">
       <h3 className="text-sm font-medium text-foreground mb-4">Participants</h3>
 
       <div className="space-y-3">
-        <div className="flex items-center justify-between py-2">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
-              <User className="w-4 h-4 text-muted-foreground" />
+        {list.map((p) => (
+          <div key={p.id} className="flex items-center justify-between py-2">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                <User className="w-4 h-4 text-muted-foreground" />
+              </div>
+              <span className="text-sm text-foreground">{p.name}</span>
             </div>
-            <span className="text-sm text-foreground">{currentUser.name}</span>
-          </div>
 
-          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-            {getRoleIcon(currentUser.role)}
-            <span>{getRoleLabel(currentUser.role)}</span>
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              {getRoleIcon(p.role)}
+              <span>{getRoleLabel(p.role)}</span>
+            </div>
           </div>
-        </div>
+        ))}
       </div>
 
       {userRole === "observer" && (
