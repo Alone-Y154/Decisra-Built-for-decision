@@ -1,5 +1,7 @@
+"use client";
+
 import { Copy, Check } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 
 interface SessionSharePanelProps {
@@ -8,10 +10,20 @@ interface SessionSharePanelProps {
 
 export function SessionSharePanel({ sessionId }: SessionSharePanelProps) {
   const [copied, setCopied] = useState(false);
+  const [origin, setOrigin] = useState<string>("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setOrigin(window.location.origin);
+  }, []);
+
+  const shareUrl = useMemo(() => {
+    return origin ? `${origin}/session/${sessionId}` : `/session/${sessionId}`;
+  }, [origin, sessionId]);
 
   const handleCopy = () => {
-    const url = `${window.location.origin}/session/${sessionId}`;
-    navigator.clipboard.writeText(url);
+    if (typeof navigator === "undefined") return;
+    void navigator.clipboard.writeText(shareUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -21,7 +33,7 @@ export function SessionSharePanel({ sessionId }: SessionSharePanelProps) {
       <h3 className="font-semibold mb-4">Share This Session</h3>
       <div className="space-y-3">
         <div className="p-3 rounded-lg bg-background/50 break-all text-xs">
-          /session/{sessionId}
+          {shareUrl}
         </div>
         <Button onClick={handleCopy} size="sm" variant="outline" className="w-full">
           {copied ? (

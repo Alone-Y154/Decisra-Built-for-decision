@@ -27,15 +27,15 @@ export function LeaveCallModal({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Leave Call</AlertDialogTitle>
-          <AlertDialogDescription className="space-y-2">
-            <p>
+          <AlertDialogDescription>
+            <span className="block">
               {role === "observer"
                 ? "You will stop observing and leave the call."
                 : "You will leave the call."}
-            </p>
-            <p className="text-muted-foreground">
+            </span>
+            <span className="mt-2 block text-muted-foreground">
               You can request access again from the session page.
-            </p>
+            </span>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

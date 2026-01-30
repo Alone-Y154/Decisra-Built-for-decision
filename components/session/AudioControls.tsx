@@ -29,7 +29,7 @@ export function AudioControls({
               className={`w-16 h-16 rounded-full flex items-center justify-center transition-colors ${
                 isMuted
                   ? "bg-muted text-muted-foreground hover:bg-muted/80"
-                  : "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "bg-accent text-primary-foreground hover:bg-accent/90"
               }`}
               aria-label={isMuted ? "Unmute" : "Mute"}
               type="button"

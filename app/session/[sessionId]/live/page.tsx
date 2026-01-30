@@ -104,6 +104,28 @@ export default function LiveSessionPage() {
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [joinAttempt, setJoinAttempt] = useState(0);
 
+  const isLeavingRef = useRef(false);
+
+  const safeDaily = (fn: () => void) => {
+    try {
+      fn();
+    } catch (err) {
+      // daily-js throws "Use after destroy" if a method is called after destroy().
+      // This can happen in React effect cleanups during navigation.
+      if (err instanceof Error && /use after destroy/i.test(err.message)) return;
+      // Ignore other cleanup errors as well; leaving should never crash the app.
+    }
+  };
+
+  const safeDailyValue = <T,>(fn: () => T): T | undefined => {
+    try {
+      return fn();
+    } catch (err) {
+      if (err instanceof Error && /use after destroy/i.test(err.message)) return;
+      return;
+    }
+  };
+
 
 
   const [participants, setParticipants] = useState<UiParticipant[]>([]);
@@ -425,6 +447,7 @@ export default function LiveSessionPage() {
   useEffect(() => {
     if (!isConnected) return;
     if (isEnded) return;
+    if (isLeavingRef.current) return;
     void refreshOutputDevices();
   }, [isConnected, isEnded]);
 
@@ -452,7 +475,9 @@ export default function LiveSessionPage() {
 
     callObject.on("active-speaker-change", onActiveSpeakerChange as never);
     return () => {
-      callObject.off("active-speaker-change", onActiveSpeakerChange as never);
+      safeDaily(() =>
+        callObject.off("active-speaker-change", onActiveSpeakerChange as never)
+      );
     };
   }, [isConnected, isEnded]);
 
@@ -464,29 +489,32 @@ export default function LiveSessionPage() {
     if (!callObject) return;
 
     // Publish our role so other clients can distinguish observer vs participant.
-    try {
-      void Promise.resolve(
+    void Promise.resolve(
+      safeDailyValue(() =>
         (callObject as unknown as {
           setUserData?: (data: unknown) => unknown;
         }).setUserData?.({ role: userRole })
-      );
-    } catch {
+      )
+    ).catch(() => {
       // ignore
-    }
+    });
 
     let cancelled = false;
 
     // Start observer so getLocalAudioLevel() actually updates.
     void Promise.resolve(
-      (callObject as unknown as {
-        startLocalAudioLevelObserver?: (intervalMs?: number) => Promise<void>;
-      }).startLocalAudioLevelObserver?.(200)
+      safeDailyValue(() =>
+        (callObject as unknown as {
+          startLocalAudioLevelObserver?: (intervalMs?: number) => Promise<void>;
+        }).startLocalAudioLevelObserver?.(200)
+      )
     ).catch(() => {
       // ignore (unsupported browser)
     });
 
     const intervalId = window.setInterval(() => {
       if (cancelled) return;
+      if (isLeavingRef.current) return;
       try {
         const maybe = callObject as unknown as {
           getLocalAudioLevel?: () => number;
@@ -513,8 +541,10 @@ export default function LiveSessionPage() {
       window.clearInterval(intervalId);
 
       void Promise.resolve(
-        (callObject as unknown as { stopLocalAudioLevelObserver?: () => void })
-          .stopLocalAudioLevelObserver?.()
+        safeDailyValue(() =>
+          (callObject as unknown as { stopLocalAudioLevelObserver?: () => void })
+            .stopLocalAudioLevelObserver?.()
+        )
       ).catch(() => {
         // ignore
       });
@@ -524,6 +554,7 @@ export default function LiveSessionPage() {
   useEffect(() => {
     if (!isConnected) return;
     if (isEnded) return;
+    if (isLeavingRef.current) return;
 
     const callObject = callRef.current;
     if (!callObject) return;
@@ -533,13 +564,17 @@ export default function LiveSessionPage() {
 
     (async () => {
       try {
-        await callObject.startRemoteParticipantsAudioLevelObserver(200);
+        const promise = safeDailyValue(() =>
+          callObject.startRemoteParticipantsAudioLevelObserver(200)
+        );
+        if (promise) await promise;
       } catch {
         // ignore
       }
 
       intervalId = window.setInterval(() => {
         if (cancelled) return;
+        if (isLeavingRef.current) return;
         try {
           const levels =
             callObject.getRemoteParticipantsAudioLevel() as Record<string, number>;
@@ -562,11 +597,7 @@ export default function LiveSessionPage() {
     return () => {
       cancelled = true;
       if (intervalId) window.clearInterval(intervalId);
-      try {
-        callObject.stopRemoteParticipantsAudioLevelObserver();
-      } catch {
-        // ignore
-      }
+      safeDaily(() => callObject.stopRemoteParticipantsAudioLevelObserver());
     };
   }, [isConnected, isEnded]);
 
@@ -691,9 +722,9 @@ export default function LiveSessionPage() {
     callObject.on("participant-left", onParticipantLeft as never);
 
     return () => {
-      callObject.off("track-started", onTrackStarted as never);
-      callObject.off("track-stopped", onTrackStopped as never);
-      callObject.off("participant-left", onParticipantLeft as never);
+      safeDaily(() => callObject.off("track-started", onTrackStarted as never));
+      safeDaily(() => callObject.off("track-stopped", onTrackStopped as never));
+      safeDaily(() => callObject.off("participant-left", onParticipantLeft as never));
 
       for (const id of Array.from(audioEls.keys())) {
         cleanupAudioEl(id);
@@ -704,6 +735,7 @@ export default function LiveSessionPage() {
   useEffect(() => {
     if (!isConnected) return;
     if (isEnded) return;
+    if (isLeavingRef.current) return;
     if (!selectedOutputDeviceId) return;
 
     for (const audio of remoteAudioElsRef.current.values()) {
@@ -726,9 +758,12 @@ export default function LiveSessionPage() {
     if (!selectedOutputDeviceId) return;
 
     setAudioDiagError(null);
-    void Promise.resolve(
+    const promise = safeDailyValue(() =>
       callObject.setOutputDeviceAsync({ outputDeviceId: selectedOutputDeviceId })
-    )
+    );
+    if (!promise) return;
+
+    void Promise.resolve(promise)
       .then(() => {
         if (typeof window !== "undefined" && sessionId) {
           sessionStorage.setItem(
@@ -753,6 +788,7 @@ export default function LiveSessionPage() {
     const join = async () => {
       if (joinInFlightRef.current) return;
       if (callRef.current) return;
+      if (isLeavingRef.current) return;
 
       joinInFlightRef.current = true;
       setIsConnected(false);
@@ -762,6 +798,8 @@ export default function LiveSessionPage() {
         callObject = DailyIframe.createCallObject();
         callRef.current = callObject;
 
+        if (cancelled || isLeavingRef.current) return;
+
         // Proactively disable mic before join to avoid any brief capture window.
         try {
           await Promise.resolve(callObject.setLocalAudio(false));
@@ -769,7 +807,11 @@ export default function LiveSessionPage() {
           // ignore
         }
 
+        if (cancelled || isLeavingRef.current) return;
+
         await callObject.join({ url: roomUrl, token: dailyToken });
+
+        if (cancelled || isLeavingRef.current) return;
 
         // Enforce muted state immediately after join as well.
         try {
@@ -778,10 +820,10 @@ export default function LiveSessionPage() {
           // ignore
         }
 
-        if (cancelled) return;
+        if (cancelled || isLeavingRef.current) return;
         setIsConnected(true);
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || isLeavingRef.current) return;
         const message =
           err instanceof Error
             ? err.message
@@ -919,9 +961,9 @@ export default function LiveSessionPage() {
     callObject.on("participant-left", onChange);
 
     return () => {
-      callObject.off("participant-joined", onChange);
-      callObject.off("participant-updated", onChange);
-      callObject.off("participant-left", onChange);
+      safeDaily(() => callObject.off("participant-joined", onChange));
+      safeDaily(() => callObject.off("participant-updated", onChange));
+      safeDaily(() => callObject.off("participant-left", onChange));
     };
   }, [displayName, isConnected, isEnded, userRole]);
 
@@ -966,6 +1008,9 @@ export default function LiveSessionPage() {
     };
 
     const onLeftMeeting = () => {
+      // If the user clicked "Leave", Daily will emit left-meeting. That is not a session end.
+      if (isLeavingRef.current) return;
+
       if (typeof window !== "undefined" && sessionId) {
         sessionStorage.removeItem(`decisra:join:${sessionId}`);
         sessionStorage.removeItem(`decisra:joinRequest:${sessionId}`);
@@ -981,8 +1026,8 @@ export default function LiveSessionPage() {
     callObject.on("app-message", onAppMessage as never);
     callObject.on("left-meeting", onLeftMeeting as never);
     return () => {
-      callObject.off("app-message", onAppMessage as never);
-      callObject.off("left-meeting", onLeftMeeting as never);
+      safeDaily(() => callObject.off("app-message", onAppMessage as never));
+      safeDaily(() => callObject.off("left-meeting", onLeftMeeting as never));
     };
   }, [isConnected, isEnded, router, sessionId]);
 
@@ -1280,10 +1325,14 @@ export default function LiveSessionPage() {
   const handleConfirmLeave = () => {
     setShowLeaveModal(false);
 
+    isLeavingRef.current = true;
+    setIsConnected(false);
+
     // Prevent accidental immediate re-entry via browser back/forward or by
     // pasting /live again.
     if (typeof window !== "undefined" && sessionId) {
       sessionStorage.setItem(`decisra:mustReRequest:${sessionId}`, "1");
+      sessionStorage.setItem(`decisra:leftNotice:${sessionId}`, "1");
       sessionStorage.removeItem(`decisra:join:${sessionId}`);
       sessionStorage.removeItem(`decisra:joinRequest:${sessionId}`);
     }
@@ -1292,7 +1341,7 @@ export default function LiveSessionPage() {
     void leaveCall();
 
     // Replace so browser back doesn't land on /live.
-    router.replace(`/session/${sessionId}?left=1`);
+    router.replace(`/session/${sessionId}`);
   };
 
   const handleConfirmEnd = async () => {

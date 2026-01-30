@@ -25,14 +25,14 @@ export function EndSessionModal({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>End Session</AlertDialogTitle>
-          <AlertDialogDescription className="space-y-2">
-            <p>
+          <AlertDialogDescription>
+            <span className="block">
               Ending the session will disconnect all participants. This session
               cannot be resumed.
-            </p>
-            <p className="text-muted-foreground">
+            </span>
+            <span className="mt-2 block text-muted-foreground">
               No data from this session will be saved.
-            </p>
+            </span>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

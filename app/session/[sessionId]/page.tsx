@@ -93,6 +93,11 @@ export default function SessionPreviewPage() {
     const missingParam = searchParams?.get("missing");
     const leftParam = searchParams?.get("left");
 
+    const leftNotice =
+      typeof window === "undefined"
+        ? null
+        : sessionStorage.getItem(`decisra:leftNotice:${sessionId}`);
+
     // If a user is sent here from /live, ensure they must request permission again.
     if (typeof window !== "undefined") {
       sessionStorage.removeItem(`decisra:join:${sessionId}`);
@@ -112,6 +117,14 @@ export default function SessionPreviewPage() {
       setNotice("You left the session. Request access to join again.");
       // Clean URL (and prevent showing the notice again on refresh).
       router.replace(`/session/${sessionId}`);
+      return;
+    }
+
+    if (leftNotice === "1") {
+      setNotice("You left the session. Request access to join again.");
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem(`decisra:leftNotice:${sessionId}`);
+      }
     }
   }, [router, searchParams, sessionId]);
 
