@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { apiFetchJson } from "@/lib/api";
 import {
   MessageSquare,
   Target,
@@ -20,7 +21,6 @@ type SessionType = "normal" | "verdict" | null;
 
 type CreateSessionSuccess = {
   sessionId: string;
-  joinUrl: string;
   expiresAt: number;
   hostToken: string;
 };
@@ -32,9 +32,145 @@ export default function NewSessionPage() {
   const [selectedType, setSelectedType] = useState<SessionType>(null);
   const [scope, setScope] = useState("");
   const [context, setContext] = useState("");
+  const [goalTitle, setGoalTitle] = useState<string>("");
   const [acknowledged, setAcknowledged] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  type VerdictGoalPreset = {
+    title: string;
+    scope: string;
+    context: string;
+  };
+
+  const VERDICT_GOALS: VerdictGoalPreset[] = useMemo(
+    () => [
+      {
+        title: "Budget allocation & resource mapping",
+        scope: "Regarding the budget allocation and resource mapping",
+        context: "Need at least $1,000 to maintain infrastructure. Allocate budget across infra, tooling, and marketing while keeping runway safe.",
+      },
+      {
+        title: "Go/No-go for a tight deadline",
+        scope: "Should we commit to a 2-week delivery deadline?",
+        context: "A partner wants delivery in 2 weeks. Team is stretched. Decide go/no-go, scope cuts, and a contingency plan.",
+      },
+      {
+        title: "Hiring priority (one role)",
+        scope: "Which single hire should we make this quarter?",
+        context: "We can hire 1 person: senior engineer vs growth marketer vs customer success. Optimize for the highest impact in 90 days.",
+      },
+      {
+        title: "Pricing tiers redesign",
+        scope: "How should we restructure pricing tiers to be clearer and convert better?",
+        context: "Current pricing is confusing. Create 3 tiers with clear limits, value metrics, and upgrade path without hurting retention.",
+      },
+      {
+        title: "Roadmap prioritization (6 weeks)",
+        scope: "What should we prioritize on the roadmap for the next 6 weeks?",
+        context: "We have 6 feature requests and limited capacity (2 dev-weeks per sprint). Consider impact, dependencies, and risks.",
+      },
+      {
+        title: "Feature launch strategy",
+        scope: "How should we launch a new feature safely?",
+        context: "We want a rollout plan that minimizes support load, mitigates risk, and has clear messaging (beta, staged rollout, GA criteria).",
+      },
+      {
+        title: "Customer escalation plan",
+        scope: "How should we respond to a customer escalation about downtime?",
+        context: "A key customer is unhappy. Decide remediation steps, timeline, compensation options, and prevention plan.",
+      },
+      {
+        title: "Stakeholder alignment",
+        scope: "How do we resolve conflicting stakeholder viewpoints and make a decision?",
+        context: "Multiple stakeholders disagree. Summarize viewpoints, clarify assumptions, and propose a decision path and owner.",
+      },
+      {
+        title: "Marketing channel selection",
+        scope: "Which marketing channels should we test first?",
+        context: "$2,000 test budget. Options: Google ads, LinkedIn, content, partnerships. Define a 2-week experiment plan and success metrics.",
+      },
+      {
+        title: "Support process improvement",
+        scope: "How can we reduce support response times without hiring?",
+        context: "Support is slow. Propose triage workflow, automation, and metrics to improve time-to-first-response.",
+      },
+      {
+        title: "Technical debt prioritization",
+        scope: "What technical debt should we tackle first?",
+        context: "Reliability issues and slower dev velocity. We can spend ~20% of sprint capacity. Prioritize by risk and customer impact.",
+      },
+      {
+        title: "Vendor/tool selection",
+        scope: "Which vendor/tool should we choose and why?",
+        context: "Compare options by cost, setup time, data ownership, reliability, and team fit. Produce a weighted decision.",
+      },
+      {
+        title: "Infra cost reduction",
+        scope: "How do we reduce infrastructure costs safely?",
+        context: "Infra spend is up 40% in 2 months. Identify quick wins (right-sizing, caching, reserved instances) and a safe rollout plan.",
+      },
+      {
+        title: "Onboarding improvement experiments",
+        scope: "How can we improve user onboarding and activation?",
+        context: "Activation rate is low. Propose 3 experiments, required changes, and how to measure success.",
+      },
+      {
+        title: "Reliability commitment / SLA",
+        scope: "Should we offer a 99.9% SLA for a paid tier?",
+        context: "Evaluate feasibility, required engineering work, monitoring, incident response, and cost impact.",
+      },
+      {
+        title: "Security priority decision",
+        scope: "What security improvements should we prioritize first?",
+        context: "Options: SSO, audit logs, pentest, secrets rotation. Limited time. Prioritize by risk reduction and customer needs.",
+      },
+      {
+        title: "Partnership evaluation",
+        scope: "Should we pursue this partnership opportunity?",
+        context: "Partner offers distribution but wants exclusivity. Evaluate upside, risks, and negotiation points.",
+      },
+      {
+        title: "Feature request triage",
+        scope: "Which 3 feature requests should we build next?",
+        context: "We have 10 customer requests. Choose top 3 based on impact, effort, strategic fit, and revenue potential.",
+      },
+      {
+        title: "Retention strategy",
+        scope: "How should we reduce churn over the next 30 days?",
+        context: "Churn increased last month. Identify likely causes, propose investigation steps, and list experiments to improve retention.",
+      },
+      {
+        title: "Decision summary + recommendation",
+        scope: "Summarize options and recommend a path forward",
+        context: "We have multiple viewpoints and constraints. Produce a clear recommendation, trade-offs, and next steps.",
+      },
+    ],
+    []
+  );
+
+  const goalBagRef = useRef<number[]>([]);
+
+  const pickRandomGoal = () => {
+    if (VERDICT_GOALS.length === 0) return;
+
+    if (goalBagRef.current.length === 0) {
+      goalBagRef.current = Array.from({ length: VERDICT_GOALS.length }, (_, i) => i);
+      for (let i = goalBagRef.current.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = goalBagRef.current[i];
+        goalBagRef.current[i] = goalBagRef.current[j];
+        goalBagRef.current[j] = tmp;
+      }
+    }
+
+    const idx = goalBagRef.current.pop();
+    if (typeof idx !== "number") return;
+    const preset = VERDICT_GOALS[idx];
+    setGoalTitle(preset.title);
+    setScope(preset.scope);
+    setContext(preset.context);
+  };
 
   const canStartVerdict =
     selectedType === "verdict" && scope.trim() && acknowledged;
@@ -47,32 +183,31 @@ export default function NewSessionPage() {
     setIsCreating(true);
     setError(null);
     try {
-      const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
-      const endpoint = apiBaseUrl ? `${apiBaseUrl}/api/session` : "/api/session";
-
-      const res = await fetch(endpoint, {
+      const { data } = await apiFetchJson<CreateSessionSuccess>("/api/session", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
+        body: payload,
       });
 
-      const data = (await res.json()) as CreateSessionSuccess | CreateSessionFailure;
-      if (!res.ok) {
-        throw new Error("error" in data ? data.error : "Failed to create session");
-      }
+      if (!data?.sessionId || !data?.hostToken) throw new Error("Failed to create session");
 
-      if (!("sessionId" in data) || !("hostToken" in data)) {
-        throw new Error("Failed to create session");
-      }
-
-      console.log("Created session:", data);
       // Keep hostToken for future authenticated host actions.
       sessionStorage.setItem(`decisra:hostToken:${data.sessionId}`, data.hostToken);
+      // Used for client-side expiry UX (backend should still enforce expiry).
+      if (typeof data.expiresAt === "number") {
+        sessionStorage.setItem(
+          `decisra:expiresAt:${data.sessionId}`,
+          String(data.expiresAt)
+        );
+      }
 
       router.push(`/session/${data.sessionId}`);
     } catch (err) {
+      if (err && typeof err === "object" && "error" in err) {
+        const payload = err as CreateSessionFailure;
+        if (typeof payload.error === "string") {
+          setError(payload.error);
+        }
+      }
       const message = err instanceof Error ? err.message : "Failed to create session";
       setError(message);
     } finally {
@@ -254,9 +389,28 @@ export default function NewSessionPage() {
         <section className="border-t border-border bg-muted/30 py-12">
           <div className="container mx-auto px-6">
             <div className="mx-auto max-w-2xl">
-              <h3 className="font-display text-xl font-semibold">
-                Configure your Verdict Session
-              </h3>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="font-display text-xl font-semibold">
+                  Configure your Verdict Session
+                </h3>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={pickRandomGoal}
+                >
+                  Random goal
+                </Button>
+              </div>
+
+              {goalTitle ? (
+                <div className="mt-3 rounded-lg border border-border bg-card p-4">
+                  <div className="text-sm font-medium">Goal: {goalTitle}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Scope and context were filled for you. Edit if needed.
+                  </div>
+                </div>
+              ) : null}
 
               {/* Step 1: Scope */}
               <div className="mt-8">

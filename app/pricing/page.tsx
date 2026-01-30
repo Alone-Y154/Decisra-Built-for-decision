@@ -35,8 +35,8 @@ const tiers: Tier[] = [
     price: "$0",
     priceNote: "Free during early access.",
     features: [
-      { text: "Unlimited Normal Sessions", available: true },
-      { text: "Verdict Sessions with scoped AI", available: true },
+      { text: "Unlimited Normal Sessions (30 mins each session)", available: true },
+      { text: "Verdict Sessions with scoped AI (10 AI Request)", available: true },
       { text: "Mandatory scope & optional context", available: true },
       { text: "Guests & observers", available: true },
       { text: "No account required", available: true },

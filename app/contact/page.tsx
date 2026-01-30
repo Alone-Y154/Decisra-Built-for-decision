@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
+import { ApiHttpError, apiFetchJson } from "@/lib/api";
 import { z } from "zod";
 import {
   Mail,
@@ -21,6 +22,11 @@ const contactSchema = z.object({
     .trim()
     .email({ message: "Please enter a valid email address" })
     .max(255, { message: "Email must be less than 255 characters" }),
+  about: z
+    .string()
+    .trim()
+    .max(1000, { message: "About must be less than 1000 characters" })
+    .optional(),
   message: z
     .string()
     .trim()
@@ -37,6 +43,26 @@ const roleOptions = ["Founder", "Manager", "Individual", "Other"];
 const teamSizeOptions = ["1", "2–5", "6–20", "20+"];
 const interestOptions = ["Early access", "Team usage", "Feedback", "General question"];
 
+const normalizeOptional = (value: string | undefined) => {
+  const trimmed = (value ?? "").trim();
+  return trimmed ? trimmed : undefined;
+};
+
+const extractBackendErrorMessage = (err: ApiHttpError) => {
+  const payload = err.payload;
+  if (!payload || typeof payload !== "object") return err.message;
+
+  const maybeError = (payload as Record<string, unknown>).error;
+  if (typeof maybeError === "string") return maybeError;
+
+  if (maybeError && typeof maybeError === "object") {
+    const message = (maybeError as Record<string, unknown>).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+
+  return err.message;
+};
+
 export default function ContactPage() {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -46,6 +72,7 @@ export default function ContactPage() {
   >({});
   const [formData, setFormData] = useState<ContactFormData>({
     email: "",
+    about: "",
     message: "",
     role: "",
     teamSize: "",
@@ -76,16 +103,42 @@ export default function ContactPage() {
 
     setIsSubmitting(true);
 
-    // Simulate form submission (replace with actual API call when backend is ready)
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      const body = {
+        email: result.data.email,
+        message: result.data.message,
+        about: normalizeOptional(result.data.about),
+        role: normalizeOptional(result.data.role),
+        teamSize: normalizeOptional(result.data.teamSize),
+        interestType: normalizeOptional(result.data.interestType),
+      };
 
-    setIsSubmitting(false);
-    setIsSubmitted(true);
-    toast({
-      title: "Message sent",
-      description:
-        "We'll get back to you when it makes sense to continue the conversation.",
-    });
+      // Uses NEXT_PUBLIC_API_BASE_URL when set (backend lives elsewhere).
+      await apiFetchJson<{ ok?: boolean }>("/api/contact", {
+        method: "POST",
+        body,
+      });
+
+      setIsSubmitted(true);
+      toast({
+        title: "Message sent",
+        description:
+          "We'll get back to you when it makes sense to continue the conversation.",
+      });
+    } catch (err) {
+      const message =
+        err instanceof ApiHttpError
+          ? extractBackendErrorMessage(err)
+          : err instanceof Error
+            ? err.message
+            : "Failed to send message";
+      toast({
+        title: "Could not send",
+        description: message,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (isSubmitted) {
@@ -145,11 +198,29 @@ export default function ContactPage() {
       <section className="border-t border-border py-20">
         <div className="container mx-auto px-6">
           <div className="mx-auto max-w-xl">
-            <h2 className="font-display text-xl font-semibold">
-              Tell us a bit about you
-            </h2>
+            <h2 className="font-display text-xl font-semibold">Contact</h2>
 
             <form onSubmit={handleSubmit} className="mt-8 space-y-6">
+              {/* About - Optional */}
+              <div className="space-y-2">
+                <label htmlFor="about" className="block text-sm font-medium">
+                  Tell us a bit about you
+                </label>
+                <textarea
+                  id="about"
+                  placeholder="Your role, what you're building, and what decisions you're trying to make..."
+                  rows={3}
+                  value={formData.about ?? ""}
+                  onChange={(e) => handleChange("about", e.target.value)}
+                  className={`w-full rounded-md border px-3 py-2 text-sm bg-background text-foreground ${
+                    errors.about ? "border-destructive" : "border-border"
+                  }`}
+                />
+                {errors.about && (
+                  <p className="text-sm text-destructive">{errors.about}</p>
+                )}
+              </div>
+
               {/* Email - Required */}
               <div className="space-y-2">
                 <label htmlFor="email" className="block text-sm font-medium">
@@ -317,10 +388,10 @@ export default function ContactPage() {
             <p className="mt-2 text-muted-foreground">
               Reach us at{" "}
               <a
-                href="mailto:hello@decisra.app"
+                href="mailto:yashwanthkris153@gmail.com"
                 className="text-accent underline-offset-4 hover:underline"
               >
-                hello@decisra.app
+                yashwanthkris153@gmail.com
               </a>
             </p>
           </div>

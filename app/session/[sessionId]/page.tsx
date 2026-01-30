@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { JoinPreview } from "@/components/session/JoinPreview";
 import { SessionEnded } from "@/components/session/SessionEnded";
+import { Button } from "@/components/ui/button";
 import type { Session } from "@/lib/types/session";
 import { ApiHttpError, apiFetchJson, apiUrl } from "@/lib/api";
 import { fetchSse, safeJsonParse, SseHttpError } from "@/lib/sse";
@@ -44,7 +45,10 @@ const normalizeSession = (data: unknown): Session | null => {
   const scope = typeof record.scope === "string" ? record.scope : undefined;
   const context = typeof record.context === "string" ? record.context : undefined;
 
-  return { id, type, scope, context };
+  const expiresAt =
+    typeof record.expiresAt === "number" ? record.expiresAt : undefined;
+
+  return { id, type, scope, context, expiresAt };
 };
 
 export default function SessionPreviewPage() {
@@ -64,6 +68,11 @@ export default function SessionPreviewPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isEnded, setIsEnded] = useState(false);
+  const [forcedVariant, setForcedVariant] = useState<"ended" | "missing" | null>(
+    null
+  );
+  const [notice, setNotice] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<number | null>(null);
 
   const [isJoining, setIsJoining] = useState(false);
   const [requestId, setRequestId] = useState<string | null>(null);
@@ -79,6 +88,47 @@ export default function SessionPreviewPage() {
 
   useEffect(() => {
     if (!sessionId) return;
+
+    const endedParam = searchParams?.get("ended");
+    const missingParam = searchParams?.get("missing");
+    const leftParam = searchParams?.get("left");
+
+    // If a user is sent here from /live, ensure they must request permission again.
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem(`decisra:join:${sessionId}`);
+    }
+
+    if (endedParam === "1") {
+      setForcedVariant("ended");
+      return;
+    }
+
+    if (missingParam === "1") {
+      setForcedVariant("missing");
+      return;
+    }
+
+    if (leftParam === "1") {
+      setNotice("You left the session. Request access to join again.");
+      // Clean URL (and prevent showing the notice again on refresh).
+      router.replace(`/session/${sessionId}`);
+    }
+  }, [router, searchParams, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    // Best-effort: pull expiry from storage (host has it right after create).
+    // Backend should also include expiresAt in GET /api/session/:id.
+    if (typeof window === "undefined") return;
+    const raw = sessionStorage.getItem(`decisra:expiresAt:${sessionId}`);
+    const parsed = raw ? Number(raw) : NaN;
+    if (!Number.isFinite(parsed)) return;
+    setExpiresAt(parsed);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
     let cancelled = false;
 
     const load = async () => {
@@ -91,6 +141,15 @@ export default function SessionPreviewPage() {
 
         const normalized = normalizeSession(data);
         if (!normalized) throw new Error("Invalid session payload");
+        if (typeof normalized.expiresAt === "number") {
+          setExpiresAt(normalized.expiresAt);
+          if (typeof window !== "undefined") {
+            sessionStorage.setItem(
+              `decisra:expiresAt:${sessionId}`,
+              String(normalized.expiresAt)
+            );
+          }
+        }
         if (!cancelled) setSession(normalized);
       } catch (err) {
         if (err instanceof ApiHttpError) {
@@ -120,6 +179,26 @@ export default function SessionPreviewPage() {
 
   useEffect(() => {
     if (!sessionId) return;
+    if (!expiresAt) return;
+    if (forcedVariant) return;
+    if (isEnded) return;
+
+    const now = Date.now();
+    if (now >= expiresAt) {
+      setForcedVariant("ended");
+      return;
+    }
+
+    const ms = Math.max(0, expiresAt - now);
+    const timeoutId = window.setTimeout(() => {
+      setForcedVariant("ended");
+    }, ms);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [expiresAt, forcedVariant, isEnded, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
 
     const storedName =
       typeof window === "undefined"
@@ -127,11 +206,35 @@ export default function SessionPreviewPage() {
         : sessionStorage.getItem(`decisra:displayName:${sessionId}`);
     if (storedName) setDisplayName(storedName);
 
+    const mustReRequest =
+      typeof window === "undefined"
+        ? false
+        : sessionStorage.getItem(`decisra:mustReRequest:${sessionId}`) === "1";
+
     const fromQuery = searchParams?.get("requestId") ?? null;
     const storedRequestRaw =
       typeof window === "undefined"
         ? null
         : sessionStorage.getItem(`decisra:joinRequest:${sessionId}`);
+
+    // If the user left previously, do not auto-resume any existing request from
+    // browser history. They must request again.
+    if (mustReRequest) {
+      setRequestId(null);
+      setRequestedRole(null);
+      setRequestStatus("idle");
+
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem(`decisra:joinRequest:${sessionId}`);
+      }
+
+      if (fromQuery) {
+        setNotice("You left the session. Request access to join again.");
+        router.replace(`/session/${sessionId}`);
+      }
+
+      return;
+    }
 
     if (fromQuery) {
       setRequestId(fromQuery);
@@ -154,7 +257,7 @@ export default function SessionPreviewPage() {
         // ignore
       }
     }
-  }, [searchParams, sessionId]);
+  }, [router, searchParams, sessionId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -188,8 +291,12 @@ export default function SessionPreviewPage() {
               assignedRole: data.role,
               roomUrl: data.roomUrl,
               dailyToken: data.dailyToken,
+              joinRequestId: requestId,
             })
           );
+
+          // User has been admitted again.
+          sessionStorage.removeItem(`decisra:mustReRequest:${sessionId}`);
 
           if (displayName) {
             sessionStorage.setItem(`decisra:displayName:${sessionId}`, displayName);
@@ -329,6 +436,11 @@ export default function SessionPreviewPage() {
     try {
       if (name) setDisplayName(name);
 
+      if (typeof window !== "undefined") {
+        // A new join attempt satisfies the "must re-request" rule.
+        sessionStorage.removeItem(`decisra:mustReRequest:${sessionId}`);
+      }
+
       if (isHostCandidate) {
         if (!hostToken) throw new Error("Missing host token");
 
@@ -395,16 +507,42 @@ export default function SessionPreviewPage() {
     router.replace(`/session/${sessionId}`);
   };
 
+  if (forcedVariant) {
+    return (
+      <SessionEnded
+        onStartNew={() => router.push("/session/new")}
+        variant={forcedVariant}
+      />
+    );
+  }
+
   if (isEnded) {
-    return <SessionEnded onStartNew={() => router.push("/session/new")} />;
+    return <SessionEnded onStartNew={() => router.push("/session/new")} variant="ended" />;
   }
 
   if (!session) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <p className="text-muted-foreground">
-          {loadError ? loadError : "Loading session..."}
-        </p>
+      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+        <div className="w-full max-w-md space-y-4 text-center">
+          <p className="text-muted-foreground">
+            {loadError ? <>{loadError}</> : "Loading session..."}
+          </p>
+
+          {loadError ? (
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <Button type="button" variant={"hero"} onClick={() => router.push("/session/new")}>
+                Start a New Session
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => router.push("/")}
+              >
+                Go to Home
+              </Button>
+            </div>
+          ) : null}
+        </div>
       </div>
     );
   }
@@ -465,6 +603,7 @@ export default function SessionPreviewPage() {
   return (
     <JoinPreview
       session={session}
+      notice={notice}
       onJoin={(role, name) => {
         // Host does not choose role; backend assigns host when Authorization is present.
         const requestedRole = isHostCandidate ? "participant" : role;

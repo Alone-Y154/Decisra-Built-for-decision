@@ -10,13 +10,17 @@ interface ParticipantsPanelProps {
   userRole: "host" | "participant" | "observer" | null;
   displayName: string;
   participants?: Participant[];
+  speakingParticipantIds?: string[];
 }
 
 export function ParticipantsPanel({
   userRole,
   displayName,
   participants,
+  speakingParticipantIds,
 }: ParticipantsPanelProps) {
+  const speakingSet = new Set(speakingParticipantIds ?? []);
+
   const getRoleIcon = (role: Participant["role"]) => {
     switch (role) {
       case "host":
@@ -53,12 +57,43 @@ export function ParticipantsPanel({
 
       <div className="space-y-3">
         {list.map((p) => (
-          <div key={p.id} className="flex items-center justify-between py-2">
+          <div
+            key={p.id}
+            className={`flex items-center justify-between py-2 -mx-2 px-2 rounded-md ${
+              speakingSet.has(p.id) ? "bg-primary/10" : ""
+            }`}
+          >
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
-                <User className="w-4 h-4 text-muted-foreground" />
+              <div
+                className={`relative w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${
+                  speakingSet.has(p.id)
+                    ? "bg-emerald-500/10 ring-2 ring-emerald-500 shadow-[0_0_0.75rem_rgba(16,185,129,0.35)]"
+                    : "bg-muted"
+                }`}
+              >
+                <User
+                  className={`w-4 h-4 transition-colors ${
+                    speakingSet.has(p.id)
+                      ? "text-emerald-600"
+                      : "text-muted-foreground"
+                  }`}
+                />
+                {speakingSet.has(p.id) && (
+                  <span
+                    className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-background animate-pulse"
+                    aria-hidden="true"
+                  />
+                )}
               </div>
-              <span className="text-sm text-foreground">{p.name}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-foreground">{p.name}</span>
+                {speakingSet.has(p.id) && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-foreground">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Speaking
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center gap-1 text-xs text-muted-foreground">

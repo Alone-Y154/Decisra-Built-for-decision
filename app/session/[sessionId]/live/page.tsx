@@ -21,12 +21,15 @@ type JoinStorage = {
   assignedRole?: "host" | "participant" | "observer";
   roomUrl?: string;
   dailyToken?: string;
+  joinRequestId?: string;
 };
 
 type JoinRequestsResponse = {
   requests: Array<{
     requestId: string;
     requestedRole: "participant" | "observer";
+    name?: string;
+    displayName?: string;
     createdAt: number;
   }>;
 };
@@ -45,9 +48,14 @@ type UiParticipant = {
   id: string;
   name: string;
   role: "host" | "participant" | "observer";
+  isLocal?: boolean;
 };
 
 type AudioDeviceOption = { deviceId: string; label: string };
+
+type DecisraAppMessage =
+  | { type: "decisra:session-ended"; sessionId?: string }
+  | { type: "decisra:session-ending"; sessionId?: string };
 
 const normalizeSession = (data: unknown): Session | null => {
   if (!data || typeof data !== "object") return null;
@@ -60,7 +68,10 @@ const normalizeSession = (data: unknown): Session | null => {
   const scope = typeof record.scope === "string" ? record.scope : undefined;
   const context = typeof record.context === "string" ? record.context : undefined;
 
-  return { id, type, scope, context };
+  const expiresAt =
+    typeof record.expiresAt === "number" ? record.expiresAt : undefined;
+
+  return { id, type, scope, context, expiresAt };
 };
 
 export default function LiveSessionPage() {
@@ -72,17 +83,23 @@ export default function LiveSessionPage() {
 
   const [session, setSession] = useState<Session | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<number | null>(null);
 
   const [displayName, setDisplayName] = useState<string>("You");
   const [userRole, setUserRole] = useState<"host" | "participant" | "observer">(
     "participant"
   );
-  const [isMuted, setIsMuted] = useState<boolean>(false);
+  // Default to muted on entry to avoid accidental hot-mic.
+  const [isMuted, setIsMuted] = useState<boolean>(true);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
   const [dailyToken, setDailyToken] = useState<string | null>(null);
+  const [joinRequestId, setJoinRequestId] = useState<string | null>(null);
 
   const [isEnded, setIsEnded] = useState(false);
+  const [endVariant, setEndVariant] = useState<"ended" | "left" | "missing">(
+    "ended"
+  );
   const [showEndModal, setShowEndModal] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [joinAttempt, setJoinAttempt] = useState(0);
@@ -102,10 +119,18 @@ export default function LiveSessionPage() {
   const [remoteAudioLevels, setRemoteAudioLevels] = useState<Record<string, number>>(
     {}
   );
-  const [remoteAudioTrackCount, setRemoteAudioTrackCount] = useState(0);
+  const [localAudioLevel, setLocalAudioLevel] = useState(0);
+  const [lastSpokeAt, setLastSpokeAt] = useState<Record<string, number>>({});
+  const [showAudioDiagnostics, setShowAudioDiagnostics] = useState(false);
 
   const callRef = useRef<DailyCall | null>(null);
   const joinInFlightRef = useRef(false);
+
+  const anonNameByIdRef = useRef<Map<string, string>>(new Map());
+  const anonCountersRef = useRef({ participant: 0, observer: 0 });
+
+  const joinRequestNameByIdRef = useRef<Map<string, string>>(new Map());
+  const joinRequestCountersRef = useRef({ participant: 0, observer: 0 });
 
   const remoteAudioContainerRef = useRef<HTMLDivElement | null>(null);
   const remoteAudioElsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
@@ -120,6 +145,88 @@ export default function LiveSessionPage() {
     for (const p of participants) map.set(p.id, p.name);
     return map;
   }, [participants]);
+
+  const localParticipantId = useMemo(() => {
+    return participants.find((p) => p.isLocal)?.id ?? "local";
+  }, [participants]);
+
+  const getAnonymousName = (id: string, role: UiParticipant["role"]) => {
+    const existing = anonNameByIdRef.current.get(id);
+    if (existing) return existing;
+
+    if (role === "observer") {
+      anonCountersRef.current.observer += 1;
+      const name = `Observer ${anonCountersRef.current.observer}`;
+      anonNameByIdRef.current.set(id, name);
+      return name;
+    }
+
+    if (role === "participant") {
+      anonCountersRef.current.participant += 1;
+      const name = `Participant ${anonCountersRef.current.participant}`;
+      anonNameByIdRef.current.set(id, name);
+      return name;
+    }
+
+    // Host fallback
+    anonNameByIdRef.current.set(id, "Host");
+    return "Host";
+  };
+
+  const getJoinRequestDisplayName = (req: JoinRequestsResponse["requests"][number]) => {
+    const record = req as unknown as Record<string, unknown>;
+    const explicitName =
+      (typeof record.displayName === "string" && record.displayName.trim())
+        ? record.displayName.trim()
+        : (typeof record.name === "string" && record.name.trim())
+          ? record.name.trim()
+          : null;
+    if (explicitName) return explicitName;
+
+    const existing = joinRequestNameByIdRef.current.get(req.requestId);
+    if (existing) return existing;
+
+    if (req.requestedRole === "observer") {
+      joinRequestCountersRef.current.observer += 1;
+      const label = `Observer ${joinRequestCountersRef.current.observer}`;
+      joinRequestNameByIdRef.current.set(req.requestId, label);
+      return label;
+    }
+
+    joinRequestCountersRef.current.participant += 1;
+    const label = `Participant ${joinRequestCountersRef.current.participant}`;
+    joinRequestNameByIdRef.current.set(req.requestId, label);
+    return label;
+  };
+
+  useEffect(() => {
+    // Cleanup join-request name cache for requests that are no longer pending.
+    const active = new Set(pendingRequests.map((r) => r.requestId));
+    for (const key of Array.from(joinRequestNameByIdRef.current.keys())) {
+      if (!active.has(key)) joinRequestNameByIdRef.current.delete(key);
+    }
+  }, [pendingRequests]);
+
+  const speakingParticipantIds = useMemo(() => {
+    const threshold = 0.015;
+    const holdMs = 900;
+    const now = Date.now();
+    const ids = new Set<string>();
+
+    const canSpeakLocally = userRole !== "observer" && !isMuted;
+    if (canSpeakLocally && localAudioLevel > threshold) ids.add(localParticipantId);
+
+    // Hold highlights briefly to avoid flicker.
+    for (const [id, ts] of Object.entries(lastSpokeAt)) {
+      if (now - ts <= holdMs) ids.add(id);
+    }
+
+    for (const [id, level] of Object.entries(remoteAudioLevels)) {
+      if (level > threshold) ids.add(id);
+    }
+
+    return Array.from(ids);
+  }, [isMuted, lastSpokeAt, localAudioLevel, localParticipantId, remoteAudioLevels, userRole]);
 
   const refreshOutputDevices = async () => {
     if (typeof navigator === "undefined") return;
@@ -235,6 +342,23 @@ export default function LiveSessionPage() {
   useEffect(() => {
     if (!sessionId) return;
 
+    // If the user previously left voluntarily, they must request permission again
+    // even if browser history tries to restore /live.
+    const mustReRequest =
+      typeof window === "undefined"
+        ? false
+        : sessionStorage.getItem(`decisra:mustReRequest:${sessionId}`) === "1";
+
+    if (mustReRequest) {
+      setIsConnected(false);
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem(`decisra:join:${sessionId}`);
+        sessionStorage.removeItem(`decisra:joinRequest:${sessionId}`);
+      }
+      router.replace(`/session/${sessionId}`);
+      return;
+    }
+
     // If user hasn't joined, send them back to preview.
     const joinRaw =
       typeof window === "undefined"
@@ -242,6 +366,9 @@ export default function LiveSessionPage() {
         : sessionStorage.getItem(`decisra:join:${sessionId}`);
 
     if (!joinRaw) {
+      // No join record means the user has not been admitted (or they already left).
+      // Send them back to the preview to request permission again.
+      setIsConnected(false);
       router.replace(`/session/${sessionId}`);
       return;
     }
@@ -250,6 +377,10 @@ export default function LiveSessionPage() {
       const join = JSON.parse(joinRaw) as JoinStorage;
       const storedName = sessionStorage.getItem(`decisra:displayName:${sessionId}`);
       if (storedName) setDisplayName(storedName);
+
+      if (typeof join.joinRequestId === "string" && join.joinRequestId) {
+        setJoinRequestId(join.joinRequestId);
+      }
 
       const roleFromJoin = join.assignedRole;
       const effectiveRole: "host" | "participant" | "observer" =
@@ -260,16 +391,23 @@ export default function LiveSessionPage() {
             : "participant";
 
       setUserRole(effectiveRole);
-      setIsMuted(effectiveRole === "observer");
+      // Everyone joins muted by default (including host/participant).
+      setIsMuted(true);
 
       if (typeof join.roomUrl === "string" && typeof join.dailyToken === "string") {
         setRoomUrl(join.roomUrl);
         setDailyToken(join.dailyToken);
       } else {
         setLoadError("Missing call credentials. Please request access again.");
+        if (typeof window !== "undefined") {
+          sessionStorage.removeItem(`decisra:join:${sessionId}`);
+        }
         router.replace(`/session/${sessionId}`);
       }
     } catch {
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem(`decisra:join:${sessionId}`);
+      }
       router.replace(`/session/${sessionId}`);
     }
   }, [hostToken, router, sessionId]);
@@ -297,6 +435,99 @@ export default function LiveSessionPage() {
     const callObject = callRef.current;
     if (!callObject) return;
 
+    // Fallback for "who's speaking" that doesn't rely on AudioWorklet support.
+    // Daily emits active-speaker-change when active speaker mode is enabled.
+    try {
+      callObject.setActiveSpeakerMode?.(true);
+    } catch {
+      // ignore
+    }
+
+    const onActiveSpeakerChange = (evt: unknown) => {
+      const record = evt as { activeSpeaker?: { peerId?: unknown } };
+      const peerId = record.activeSpeaker?.peerId;
+      if (typeof peerId !== "string" || !peerId) return;
+      setLastSpokeAt((prev) => ({ ...prev, [peerId]: Date.now() }));
+    };
+
+    callObject.on("active-speaker-change", onActiveSpeakerChange as never);
+    return () => {
+      callObject.off("active-speaker-change", onActiveSpeakerChange as never);
+    };
+  }, [isConnected, isEnded]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    if (isEnded) return;
+
+    const callObject = callRef.current;
+    if (!callObject) return;
+
+    // Publish our role so other clients can distinguish observer vs participant.
+    try {
+      void Promise.resolve(
+        (callObject as unknown as {
+          setUserData?: (data: unknown) => unknown;
+        }).setUserData?.({ role: userRole })
+      );
+    } catch {
+      // ignore
+    }
+
+    let cancelled = false;
+
+    // Start observer so getLocalAudioLevel() actually updates.
+    void Promise.resolve(
+      (callObject as unknown as {
+        startLocalAudioLevelObserver?: (intervalMs?: number) => Promise<void>;
+      }).startLocalAudioLevelObserver?.(200)
+    ).catch(() => {
+      // ignore (unsupported browser)
+    });
+
+    const intervalId = window.setInterval(() => {
+      if (cancelled) return;
+      try {
+        const maybe = callObject as unknown as {
+          getLocalAudioLevel?: () => number;
+        };
+        if (typeof maybe.getLocalAudioLevel !== "function") {
+          setLocalAudioLevel(0);
+          return;
+        }
+
+        const level = maybe.getLocalAudioLevel();
+        if (typeof level === "number" && Number.isFinite(level)) {
+          setLocalAudioLevel(level);
+          if (level > 0.015) {
+            setLastSpokeAt((prev) => ({ ...prev, [localParticipantId]: Date.now() }));
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+
+      void Promise.resolve(
+        (callObject as unknown as { stopLocalAudioLevelObserver?: () => void })
+          .stopLocalAudioLevelObserver?.()
+      ).catch(() => {
+        // ignore
+      });
+    };
+  }, [isConnected, isEnded, localParticipantId, userRole]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    if (isEnded) return;
+
+    const callObject = callRef.current;
+    if (!callObject) return;
+
     let intervalId: number | null = null;
     let cancelled = false;
 
@@ -310,9 +541,18 @@ export default function LiveSessionPage() {
       intervalId = window.setInterval(() => {
         if (cancelled) return;
         try {
-          setRemoteAudioLevels(
-            callObject.getRemoteParticipantsAudioLevel() as Record<string, number>
-          );
+          const levels =
+            callObject.getRemoteParticipantsAudioLevel() as Record<string, number>;
+          setRemoteAudioLevels(levels);
+          const now = Date.now();
+          const threshold = 0.015;
+          const updates: Record<string, number> = {};
+          for (const [id, level] of Object.entries(levels)) {
+            if (level > threshold) updates[id] = now;
+          }
+          if (Object.keys(updates).length) {
+            setLastSpokeAt((prev) => ({ ...prev, ...updates }));
+          }
         } catch {
           // ignore
         }
@@ -338,8 +578,10 @@ export default function LiveSessionPage() {
     const callObject = callRef.current;
     if (!callObject) return;
 
+    const audioEls = remoteAudioElsRef.current;
+
     const ensureAudioEl = async (sessionIdForAudio: string) => {
-      const existing = remoteAudioElsRef.current.get(sessionIdForAudio);
+      const existing = audioEls.get(sessionIdForAudio);
       if (existing) return existing;
 
       const audio = document.createElement("audio");
@@ -348,8 +590,7 @@ export default function LiveSessionPage() {
       audio.muted = false;
       audio.volume = 1;
 
-      remoteAudioElsRef.current.set(sessionIdForAudio, audio);
-      setRemoteAudioTrackCount(remoteAudioElsRef.current.size);
+      audioEls.set(sessionIdForAudio, audio);
 
       remoteAudioContainerRef.current?.appendChild(audio);
 
@@ -369,7 +610,7 @@ export default function LiveSessionPage() {
     };
 
     const cleanupAudioEl = (sessionIdForAudio: string) => {
-      const audio = remoteAudioElsRef.current.get(sessionIdForAudio);
+      const audio = audioEls.get(sessionIdForAudio);
       if (!audio) return;
       try {
         audio.pause();
@@ -382,8 +623,7 @@ export default function LiveSessionPage() {
       } catch {
         // ignore
       }
-      remoteAudioElsRef.current.delete(sessionIdForAudio);
-      setRemoteAudioTrackCount(remoteAudioElsRef.current.size);
+      audioEls.delete(sessionIdForAudio);
     };
 
     const onTrackStarted = (evt: unknown) => {
@@ -455,7 +695,7 @@ export default function LiveSessionPage() {
       callObject.off("track-stopped", onTrackStopped as never);
       callObject.off("participant-left", onParticipantLeft as never);
 
-      for (const id of Array.from(remoteAudioElsRef.current.keys())) {
+      for (const id of Array.from(audioEls.keys())) {
         cleanupAudioEl(id);
       }
     };
@@ -522,7 +762,21 @@ export default function LiveSessionPage() {
         callObject = DailyIframe.createCallObject();
         callRef.current = callObject;
 
+        // Proactively disable mic before join to avoid any brief capture window.
+        try {
+          await Promise.resolve(callObject.setLocalAudio(false));
+        } catch {
+          // ignore
+        }
+
         await callObject.join({ url: roomUrl, token: dailyToken });
+
+        // Enforce muted state immediately after join as well.
+        try {
+          await Promise.resolve(callObject.setLocalAudio(false));
+        } catch {
+          // ignore
+        }
 
         if (cancelled) return;
         setIsConnected(true);
@@ -590,29 +844,57 @@ export default function LiveSessionPage() {
           user_name?: unknown;
           local?: unknown;
           owner?: unknown;
+          session_id?: unknown;
+          user_data?: unknown;
+          userData?: unknown;
         };
 
         const isLocal = record.local === true;
         const isOwner = record.owner === true;
-        const nameFromDaily =
-          typeof record.user_name === "string" && record.user_name.trim()
-            ? record.user_name
-            : isLocal
-              ? displayName || "You"
-              : "Guest";
+        const stableId = typeof record.session_id === "string" ? record.session_id : id;
+
+        const userData =
+          (record.user_data as Record<string, unknown> | undefined) ??
+          (record.userData as Record<string, unknown> | undefined);
+
+        const roleFromUserData = userData?.role;
 
         const role: UiParticipant["role"] = isLocal
           ? userRole
           : isOwner
             ? "host"
-            : "participant";
+            : roleFromUserData === "observer"
+              ? "observer"
+              : "participant";
 
-        return { id, name: nameFromDaily, role };
+        const rawUserName =
+          typeof record.user_name === "string" ? record.user_name.trim() : "";
+
+        // Daily can default remote names to placeholders like "You" / "Guest".
+        // For remote users, treat those as unnamed so we can apply our own labels.
+        const isPlaceholderName = /^(you|guest)$/i.test(rawUserName);
+        const hasRealUserName = !!rawUserName && !isPlaceholderName;
+
+        const nameFromDaily = isLocal
+          ? "You"
+          : hasRealUserName
+            ? rawUserName
+            : role === "host"
+              ? "Host"
+              : getAnonymousName(stableId, role);
+
+        return { id: stableId, name: nameFromDaily, role, isLocal };
       });
 
       // Put local participant first for a nicer UX.
-      list.sort((a, b) => (a.id === "local" ? -1 : b.id === "local" ? 1 : 0));
+      list.sort((a, b) => (a.isLocal ? -1 : b.isLocal ? 1 : 0));
       setParticipants(list);
+
+      // Cleanup anonymous name cache for participants that left.
+      const active = new Set(list.map((p) => p.id));
+      for (const key of Array.from(anonNameByIdRef.current.keys())) {
+        if (!active.has(key)) anonNameByIdRef.current.delete(key);
+      }
     };
 
     // Set our displayed name in Daily if possible.
@@ -657,6 +939,54 @@ export default function LiveSessionPage() {
   }, [isConnected, isEnded, isMuted, userRole]);
 
   useEffect(() => {
+    if (!isConnected) return;
+    if (isEnded) return;
+
+    const callObject = callRef.current;
+    if (!callObject) return;
+
+    const onAppMessage = (evt: unknown) => {
+      const record = evt as { data?: unknown };
+      const data = record.data as DecisraAppMessage | undefined;
+      if (!data || typeof data !== "object") return;
+
+      if (data.type === "decisra:session-ended" || data.type === "decisra:session-ending") {
+        // Ensure /live cannot be revisited without requesting permission again.
+        if (typeof window !== "undefined" && sessionId) {
+          sessionStorage.removeItem(`decisra:join:${sessionId}`);
+          sessionStorage.removeItem(`decisra:joinRequest:${sessionId}`);
+        }
+
+        setEndVariant("ended");
+        setIsEnded(true);
+        setIsConnected(false);
+
+        if (sessionId) router.replace(`/session/${sessionId}?ended=1`);
+      }
+    };
+
+    const onLeftMeeting = () => {
+      if (typeof window !== "undefined" && sessionId) {
+        sessionStorage.removeItem(`decisra:join:${sessionId}`);
+        sessionStorage.removeItem(`decisra:joinRequest:${sessionId}`);
+      }
+
+      setEndVariant("ended");
+      setIsEnded(true);
+      setIsConnected(false);
+
+      if (sessionId) router.replace(`/session/${sessionId}?ended=1`);
+    };
+
+    callObject.on("app-message", onAppMessage as never);
+    callObject.on("left-meeting", onLeftMeeting as never);
+    return () => {
+      callObject.off("app-message", onAppMessage as never);
+      callObject.off("left-meeting", onLeftMeeting as never);
+    };
+  }, [isConnected, isEnded, router, sessionId]);
+
+  useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
 
@@ -685,10 +1015,27 @@ export default function LiveSessionPage() {
         const normalized = normalizeSession(data);
         if (!normalized) throw new Error("Invalid session payload");
 
+        if (typeof normalized.expiresAt === "number") {
+          setExpiresAt(normalized.expiresAt);
+          if (typeof window !== "undefined") {
+            sessionStorage.setItem(
+              `decisra:expiresAt:${sessionId}`,
+              String(normalized.expiresAt)
+            );
+          }
+        }
+
         if (!cancelled) setSession(normalized);
       } catch (err) {
         if (err instanceof ApiHttpError) {
           if (!cancelled && err.status === 410) {
+            setEndVariant("ended");
+            setIsEnded(true);
+            setIsConnected(false);
+            return;
+          }
+          if (!cancelled && err.status === 404) {
+            setEndVariant("missing");
             setIsEnded(true);
             setIsConnected(false);
             return;
@@ -704,6 +1051,38 @@ export default function LiveSessionPage() {
       cancelled = true;
     };
   }, [apiBaseUrl, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    if (typeof window === "undefined") return;
+    const raw = sessionStorage.getItem(`decisra:expiresAt:${sessionId}`);
+    const parsed = raw ? Number(raw) : NaN;
+    if (!Number.isFinite(parsed)) return;
+    setExpiresAt(parsed);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    if (!expiresAt) return;
+    if (isEnded) return;
+
+    const now = Date.now();
+    if (now >= expiresAt) {
+      setEndVariant("ended");
+      setIsEnded(true);
+      setIsConnected(false);
+      return;
+    }
+
+    const ms = Math.max(0, expiresAt - now);
+    const timeoutId = window.setTimeout(() => {
+      setEndVariant("ended");
+      setIsEnded(true);
+      setIsConnected(false);
+    }, ms);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [expiresAt, isEnded, sessionId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -765,6 +1144,7 @@ export default function LiveSessionPage() {
               if (!wrapped) return;
 
               if (wrapped.type === "ended") {
+                setEndVariant("ended");
                 setIsEnded(true);
               } else if (wrapped.type === "snapshot") {
                 const requests = wrapped.data.requests ?? [];
@@ -872,9 +1252,14 @@ export default function LiveSessionPage() {
       if (typeof window !== "undefined" && sessionId) {
         sessionStorage.removeItem(`decisra:join:${sessionId}`);
         sessionStorage.removeItem(`decisra:joinRequest:${sessionId}`);
+        sessionStorage.removeItem(`decisra:expiresAt:${sessionId}`);
+        sessionStorage.removeItem(`decisra:mustReRequest:${sessionId}`);
+        if (isHost) {
+          sessionStorage.removeItem(`decisra:hostToken:${sessionId}`);
+        }
       }
     });
-  }, [isEnded, sessionId]);
+  }, [isEnded, isHost, sessionId]);
 
   const handleReconnectAudio = async () => {
     // A user-initiated reconnect often resolves "joined but can't hear" issues
@@ -894,13 +1279,20 @@ export default function LiveSessionPage() {
 
   const handleConfirmLeave = () => {
     setShowLeaveModal(false);
-    leaveCall().finally(() => {
-      if (typeof window !== "undefined" && sessionId) {
-        sessionStorage.removeItem(`decisra:join:${sessionId}`);
-        sessionStorage.removeItem(`decisra:joinRequest:${sessionId}`);
-      }
-      router.push(`/session/${sessionId}`);
-    });
+
+    // Prevent accidental immediate re-entry via browser back/forward or by
+    // pasting /live again.
+    if (typeof window !== "undefined" && sessionId) {
+      sessionStorage.setItem(`decisra:mustReRequest:${sessionId}`, "1");
+      sessionStorage.removeItem(`decisra:join:${sessionId}`);
+      sessionStorage.removeItem(`decisra:joinRequest:${sessionId}`);
+    }
+
+    // Best-effort detach immediately.
+    void leaveCall();
+
+    // Replace so browser back doesn't land on /live.
+    router.replace(`/session/${sessionId}?left=1`);
   };
 
   const handleConfirmEnd = async () => {
@@ -908,6 +1300,17 @@ export default function LiveSessionPage() {
     if (!hostToken) {
       setShowEndModal(false);
       return;
+    }
+
+    // Immediately notify connected clients (participants/observers) via Daily.
+    // This makes the end-state UI appear without requiring refresh.
+    try {
+      callRef.current?.sendAppMessage?.(
+        { type: "decisra:session-ending", sessionId } satisfies DecisraAppMessage,
+        "*"
+      );
+    } catch {
+      // ignore
     }
 
     try {
@@ -932,12 +1335,24 @@ export default function LiveSessionPage() {
         );
       }
 
+      // Confirm to all clients that the session is ended.
+      try {
+        callRef.current?.sendAppMessage?.(
+          { type: "decisra:session-ended", sessionId } satisfies DecisraAppMessage,
+          "*"
+        );
+      } catch {
+        // ignore
+      }
+
       await leaveCall();
       if (typeof window !== "undefined") {
         sessionStorage.removeItem(`decisra:join:${sessionId}`);
         sessionStorage.removeItem(`decisra:joinRequest:${sessionId}`);
+        sessionStorage.removeItem(`decisra:hostToken:${sessionId}`);
       }
       setShowEndModal(false);
+      setEndVariant("ended");
       setIsEnded(true);
       setIsConnected(false);
     } catch (err) {
@@ -983,6 +1398,10 @@ export default function LiveSessionPage() {
     router.push("/session/new");
   };
 
+  if (isEnded) {
+    return <SessionEnded onStartNew={handleStartNew} variant={endVariant} />;
+  }
+
   if (!session) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -993,14 +1412,10 @@ export default function LiveSessionPage() {
     );
   }
 
-  if (isEnded) {
-    return <SessionEnded onStartNew={handleStartNew} />;
-  }
-
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <div ref={remoteAudioContainerRef} className="hidden" aria-hidden="true" />
-      <SessionHeader session={session} />
+      <SessionHeader session={session} expiresAt={expiresAt} />
 
       <main className="flex-1 container max-w-6xl mx-auto px-4 py-8">
         {!loadError && !isConnected && roomUrl && dailyToken && !isEnded && (
@@ -1046,12 +1461,20 @@ export default function LiveSessionPage() {
               userRole={userRole}
               displayName={displayName}
               participants={participants}
+              speakingParticipantIds={speakingParticipantIds}
             />
           </div>
 
           <div className="space-y-6">
-            {session.type === "verdict" && (
-              <AIPanel scope={session.scope} context={session.context} />
+            {session.type === "verdict" && userRole !== "observer" && (
+              <AIPanel
+                sessionId={session.id}
+                role={userRole === "host" ? "host" : "participant"}
+                hostToken={userRole === "host" ? hostToken : null}
+                requestId={userRole === "host" ? null : joinRequestId}
+                scope={session.scope}
+                context={session.context}
+              />
             )}
 
             <SessionSharePanel sessionId={session.id} />
@@ -1117,53 +1540,46 @@ export default function LiveSessionPage() {
                     </button>
                   </div>
 
-                  <div className="rounded-lg border border-border/60 bg-background/30 p-3">
-                    {(() => {
-                      const entries = Object.entries(remoteAudioLevels)
-                        .filter(([id]) => id !== "local")
-                        .sort((a, b) => b[1] - a[1])
-                        .slice(0, 5);
+                  <button
+                    type="button"
+                    className="text-xs underline text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowAudioDiagnostics((v) => !v)}
+                  >
+                    {showAudioDiagnostics ? "Hide diagnostics" : "Show diagnostics"}
+                  </button>
 
-                      const max = entries.length ? entries[0][1] : 0;
+                  {showAudioDiagnostics && (
+                    <div className="rounded-lg border border-border/60 bg-background/30 p-3">
+                      {(() => {
+                        const entries = Object.entries(remoteAudioLevels)
+                          .filter(([id]) => id !== localParticipantId)
+                          .sort((a, b) => b[1] - a[1])
+                          .slice(0, 5);
 
-                      return (
-                        <>
+                        return entries.length > 0 ? (
+                          <div className="space-y-1">
+                            {entries.map(([id, level]) => (
+                              <div
+                                key={id}
+                                className="flex items-center justify-between text-xs"
+                              >
+                                <span className="text-muted-foreground">
+                                  {participantNameById.get(id) ?? id}
+                                </span>
+                                <span className="text-foreground">
+                                  {level.toFixed(3)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
                           <p className="text-xs text-muted-foreground">
-                            Remote audio detected:{" "}
-                            <span className="text-foreground">
-                              {max > 0.02 || remoteAudioTrackCount > 0 ? "Yes" : "No"}
-                            </span>
+                            No remote audio levels yet.
                           </p>
-
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Remote audio tracks attached: {remoteAudioTrackCount}
-                          </p>
-
-                          {entries.length > 0 ? (
-                            <div className="mt-2 space-y-1">
-                              {entries.map(([id, level]) => (
-                                <div
-                                  key={id}
-                                  className="flex items-center justify-between text-xs"
-                                >
-                                  <span className="text-muted-foreground">
-                                    {participantNameById.get(id) ?? id}
-                                  </span>
-                                  <span className="text-foreground">
-                                    {level.toFixed(3)}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Waiting for remote audio…
-                            </p>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </div>
+                        );
+                      })()}
+                    </div>
+                  )}
 
                   {audioDiagError && (
                     <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
@@ -1196,11 +1612,11 @@ export default function LiveSessionPage() {
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div>
-                            <p className="text-sm text-foreground">
-                              Request: <span className="font-mono">{req.requestId}</span>
+                            <p className="text-sm font-medium text-foreground">
+                              {getJoinRequestDisplayName(req)}
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              Role: {req.requestedRole}
+                              Requested role: {req.requestedRole}
                             </p>
                           </div>
                           <div className="flex gap-2">
@@ -1213,7 +1629,8 @@ export default function LiveSessionPage() {
                             </button>
                             <button
                               type="button"
-                              className="text-xs px-3 py-1 rounded-md bg-primary text-primary-foreground hover:opacity-90"
+                              //bg-accent text-accent-foreground font-semibold shadow-lg hover:shadow-[0_0_40px_hsl(38_92%_50%/0.3)] hover:scale-[1.02] active:scale-[0.98]
+                              className="text-xs px-3 py-1 rounded-md bg-accent font-semibold text-accent-foreground hover:opacity-90"
                               onClick={() => handleAdmit(req.requestId)}
                             >
                               Admit

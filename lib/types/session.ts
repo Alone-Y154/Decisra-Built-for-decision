@@ -5,4 +5,5 @@ export interface Session {
   type: SessionType;
   scope?: string;
   context?: string;
+  expiresAt?: number;
 }

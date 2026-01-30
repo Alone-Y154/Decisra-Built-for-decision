@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import StoreProvider from "./StoreProvider";
-import Header from "@/components/Header";
-import Footer from "@/components/Footer";
+import LayoutChrome from "@/components/LayoutChrome";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -28,14 +27,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <body
+        suppressHydrationWarning
         className={`${inter.variable} ${spaceGrotesk.variable} antialiased`}
       >
         <StoreProvider>
-          <Header />
-          <main className="pt-16">{children}</main>
-          <Footer />
+          <LayoutChrome>{children}</LayoutChrome>
         </StoreProvider>
       </body>
     </html>

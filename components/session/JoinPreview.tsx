@@ -9,6 +9,7 @@ interface JoinPreviewProps {
   onJoin: (role: "participant" | "observer", name?: string) => void;
   isHost: boolean;
   isJoining?: boolean;
+  notice?: string | null;
   error?: string | null;
 }
 
@@ -17,6 +18,7 @@ export function JoinPreview({
   onJoin,
   isHost,
   isJoining = false,
+  notice = null,
   error = null,
 }: JoinPreviewProps) {
   const [selectedRole, setSelectedRole] = useState<
@@ -33,6 +35,11 @@ export function JoinPreview({
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-6">
       <div className="w-full max-w-md space-y-8">
+        {notice && (
+          <div className="rounded-lg border border-border bg-muted/20 p-4 text-sm text-foreground">
+            {notice}
+          </div>
+        )}
         {error && (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
             {error}
