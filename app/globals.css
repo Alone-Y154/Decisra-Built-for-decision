@@ -191,6 +191,37 @@
 }
 
 @layer utilities {
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    /* Firefox */
+    scrollbar-color: hsl(var(--primary) / 0.45) hsl(var(--card) / 0.35);
+    /* Prevent layout shift when the scrollbar appears */
+    scrollbar-gutter: stable both-edges;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: hsl(var(--card) / 0.35);
+    border-left: 1px solid hsl(var(--border) / 0.55);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--primary) / 0.35);
+    border-radius: 9999px;
+    border: 3px solid hsl(var(--card) / 0.35);
+    background-clip: content-box;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--primary) / 0.55);
+  }
+}
+
+@layer utilities {
   .animate-fade-in {
     animation: fadeIn 0.6s ease-out forwards;
   }

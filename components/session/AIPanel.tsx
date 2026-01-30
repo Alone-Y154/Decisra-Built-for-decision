@@ -163,7 +163,7 @@ export function AIPanel({
               </code>
             ),
             pre: ({ children }) => (
-              <pre className="overflow-x-auto rounded bg-muted p-3 text-[12px] leading-relaxed">
+              <pre className="max-w-full overflow-x-auto rounded bg-muted p-3 text-[12px] leading-relaxed">
                 {children}
               </pre>
             ),
@@ -239,7 +239,7 @@ export function AIPanel({
         )}
       </div>
 
-      <div className="h-64 overflow-y-auto p-4 space-y-4">
+      <div className="h-64 overflow-y-auto p-4 pr-3 space-y-4 custom-scrollbar">
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center px-4">
             <p className="text-sm text-muted-foreground">
@@ -285,7 +285,7 @@ export function AIPanel({
 
               return (
                 <div key={message.id} className={containerClass}>
-                  <div className={`max-w-[85%] ${bubbleBase} ${bubbleClass}`}>
+                  <div className={`max-w-[85%] min-w-0 break-words ${bubbleBase} ${bubbleClass}`}>
                     <div className="text-[11px] opacity-80 mb-1 font-medium">
                       {label}
                     </div>
@@ -311,7 +311,7 @@ export function AIPanel({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask something related to the decision scope…"
-            className="min-h-15 resize-none text-sm"
+            className="min-h-15 resize-none text-sm custom-scrollbar overflow-y-auto overflow-x-hidden"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
