@@ -187,6 +187,11 @@ export function useVerdictAiRealtime({
   const streamingAssistantIdRef = useRef<string | null>(null);
   const warnedAboutAudioRef = useRef(false);
 
+  // Some backends emit both `response.output_text.done` and `response.done`.
+  // If we already finalized a text response on output_text.done, ignore the
+  // subsequent response.done to avoid rendering duplicates.
+  const ignoreNextResponseDoneRef = useRef(false);
+
   // We only update quota counters after we know a request was actually processed.
   // If the backend responds with `scope.violation`, the request should not consume quota.
   const pendingChargeCountRef = useRef(0);
@@ -529,21 +534,58 @@ export function useVerdictAiRealtime({
 
           maybeChargeForAssistantOutput();
 
+          // If we already created a streaming assistant message from deltas,
+          // finalize that message instead of appending a second one.
           setMessages((prev) => {
-            const id = newId();
-            return [...prev, { id, role: "assistant", content: doneText }];
+            const streamingId = streamingAssistantIdRef.current;
+            if (!streamingId) {
+              const id = newId();
+              return [...prev, { id, role: "assistant", content: doneText }];
+            }
+
+            const next = prev.map((m) => {
+              if (m.id !== streamingId) return m;
+              // Prefer the longer version (some servers send partial deltas).
+              const nextContent =
+                typeof m.content === "string" && m.content.length >= doneText.length
+                  ? m.content
+                  : doneText;
+              return { ...m, content: nextContent };
+            });
+            return next;
           });
 
           streamingAssistantIdRef.current = null;
+          ignoreNextResponseDoneRef.current = true;
           chargedThisResponseRef.current = false;
           return;
         }
 
         if (typeStr === "response.done") {
+          if (ignoreNextResponseDoneRef.current) {
+            ignoreNextResponseDoneRef.current = false;
+            streamingAssistantIdRef.current = null;
+            chargedThisResponseRef.current = false;
+            return;
+          }
+
           const done = extractTextFromResponseDone(rec);
           if (done) {
             maybeChargeForAssistantOutput();
-            setMessages((prev) => [...prev, { id: newId(), role: "assistant", content: done }]);
+
+            setMessages((prev) => {
+              const streamingId = streamingAssistantIdRef.current;
+              if (!streamingId) {
+                return [...prev, { id: newId(), role: "assistant", content: done }];
+              }
+
+              const next = prev.map((m) => {
+                if (m.id !== streamingId) return m;
+                const nextContent = m.content.length >= done.length ? m.content : done;
+                return { ...m, content: nextContent };
+              });
+              return next;
+            });
           }
           streamingAssistantIdRef.current = null;
           chargedThisResponseRef.current = false;
@@ -606,7 +648,7 @@ export function useVerdictAiRealtime({
       }
       setStatus("error");
     }
-  }, [closeSocket, disable, hostToken, persistState, requestId, role, sessionId, status]);
+  }, [closeSocket, disable, hostToken, maybeChargeForAssistantOutput, persistState, requestId, role, sessionId, status]);
 
   const disconnect = useCallback(() => {
     isManuallyClosedRef.current = true;

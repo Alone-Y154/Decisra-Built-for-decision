@@ -68,9 +68,9 @@ export default function SessionPreviewPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isEnded, setIsEnded] = useState(false);
-  const [forcedVariant, setForcedVariant] = useState<"ended" | "missing" | null>(
-    null
-  );
+  const [forcedVariant, setForcedVariant] = useState<
+    "ended" | "missing" | "left" | null
+  >(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
 
@@ -114,14 +114,14 @@ export default function SessionPreviewPage() {
     }
 
     if (leftParam === "1") {
-      setNotice("You left the session. Request access to join again.");
+      setForcedVariant("left");
       // Clean URL (and prevent showing the notice again on refresh).
       router.replace(`/session/${sessionId}`);
       return;
     }
 
     if (leftNotice === "1") {
-      setNotice("You left the session. Request access to join again.");
+      setForcedVariant("left");
       if (typeof window !== "undefined") {
         sessionStorage.removeItem(`decisra:leftNotice:${sessionId}`);
       }
