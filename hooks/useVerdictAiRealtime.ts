@@ -103,29 +103,6 @@ const newId = () => {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
-const pickDeltaText = (evt: Record<string, unknown>) => {
-  const delta = evt.delta;
-  if (typeof delta === "string") return delta;
-
-  const text = evt.text;
-  if (typeof text === "string") return text;
-
-  const chunk = evt.chunk;
-  if (typeof chunk === "string") return chunk;
-
-  return null;
-};
-
-const pickDoneText = (evt: Record<string, unknown>) => {
-  const text = evt.text;
-  if (typeof text === "string") return text;
-
-  const outputText = evt.output_text;
-  if (typeof outputText === "string") return outputText;
-
-  return null;
-};
-
 const extractTextFromResponseDone = (evt: Record<string, unknown>) => {
   // Expected-ish shapes:
   // { type: "response.done", response: { output: [{ content: [{ type:"output_text"|"text", text:"..." }]}] } }
@@ -187,10 +164,9 @@ export function useVerdictAiRealtime({
   const streamingAssistantIdRef = useRef<string | null>(null);
   const warnedAboutAudioRef = useRef(false);
 
-  // Some backends emit both `response.output_text.done` and `response.done`.
-  // If we already finalized a text response on output_text.done, ignore the
-  // subsequent response.done to avoid rendering duplicates.
-  const ignoreNextResponseDoneRef = useRef(false);
+  // Idempotency: some backends (or reconnect races) can deliver the same
+  // `response.done` more than once. Deduplicate by response.id.
+  const seenResponseIdsRef = useRef<Set<string>>(new Set());
 
   // We only update quota counters after we know a request was actually processed.
   // If the backend responds with `scope.violation`, the request should not consume quota.
@@ -310,6 +286,7 @@ export function useVerdictAiRealtime({
 
     streamingAssistantIdRef.current = null;
     warnedAboutAudioRef.current = false;
+    seenResponseIdsRef.current.clear();
   }, []);
 
   const disable = useCallback(
@@ -480,6 +457,18 @@ export function useVerdictAiRealtime({
         // Best-effort: stitch assistant output from common Realtime delta events.
         const typeStr = typeof type === "string" ? type : "";
 
+        // This UI is designed to render final text from `response.done` only.
+        // Ignore other realtime output event types (delta/output_text.done/etc)
+        // to prevent duplicate rendering across backend implementations.
+        if (typeStr !== "response.done") {
+          if (typeStr.endsWith(".done") || typeStr.includes("output_text") || typeStr.endsWith(".delta")) {
+            // still clear streaming state if any
+            streamingAssistantIdRef.current = null;
+            chargedThisResponseRef.current = false;
+          }
+          return;
+        }
+
         // If the backend is emitting audio output events, the UI will appear to
         // "not respond" because we only render text. Surface this clearly.
         if (!warnedAboutAudioRef.current && typeStr.includes("audio")) {
@@ -495,78 +484,19 @@ export function useVerdictAiRealtime({
             },
           ]);
         }
-        const isDelta = typeStr.endsWith(".delta");
-
-        // Some servers send the complete output text on *.done.
-        const isOutputTextDone =
-          typeStr === "response.output_text.done" ||
-          (typeStr.endsWith(".done") && typeStr.includes("output_text"));
-
-        if (isDelta) {
-          const deltaText = pickDeltaText(rec);
-          if (!deltaText) return;
-
-          // If we are receiving assistant text, this request should consume quota.
-          maybeChargeForAssistantOutput();
-
-          setMessages((prev) => {
-            const streamingId = streamingAssistantIdRef.current;
-            if (!streamingId) {
-              const id = newId();
-              streamingAssistantIdRef.current = id;
-              return [...prev, { id, role: "assistant", content: deltaText }];
-            }
-
-            const next = prev.map((m) =>
-              m.id === streamingId
-                ? { ...m, content: m.content + deltaText }
-                : m
-            );
-            return next;
-          });
-
-          return;
-        }
-
-        if (isOutputTextDone) {
-          const doneText = pickDoneText(rec);
-          if (!doneText) return;
-
-          maybeChargeForAssistantOutput();
-
-          // If we already created a streaming assistant message from deltas,
-          // finalize that message instead of appending a second one.
-          setMessages((prev) => {
-            const streamingId = streamingAssistantIdRef.current;
-            if (!streamingId) {
-              const id = newId();
-              return [...prev, { id, role: "assistant", content: doneText }];
-            }
-
-            const next = prev.map((m) => {
-              if (m.id !== streamingId) return m;
-              // Prefer the longer version (some servers send partial deltas).
-              const nextContent =
-                typeof m.content === "string" && m.content.length >= doneText.length
-                  ? m.content
-                  : doneText;
-              return { ...m, content: nextContent };
-            });
-            return next;
-          });
-
-          streamingAssistantIdRef.current = null;
-          ignoreNextResponseDoneRef.current = true;
-          chargedThisResponseRef.current = false;
-          return;
-        }
-
         if (typeStr === "response.done") {
-          if (ignoreNextResponseDoneRef.current) {
-            ignoreNextResponseDoneRef.current = false;
-            streamingAssistantIdRef.current = null;
-            chargedThisResponseRef.current = false;
-            return;
+          const responseObj = rec.response;
+          const responseId =
+            responseObj && typeof responseObj === "object"
+              ? ((responseObj as Record<string, unknown>).id as unknown)
+              : null;
+          if (typeof responseId === "string") {
+            if (seenResponseIdsRef.current.has(responseId)) {
+              streamingAssistantIdRef.current = null;
+              chargedThisResponseRef.current = false;
+              return;
+            }
+            seenResponseIdsRef.current.add(responseId);
           }
 
           const done = extractTextFromResponseDone(rec);
@@ -574,27 +504,16 @@ export function useVerdictAiRealtime({
             maybeChargeForAssistantOutput();
 
             setMessages((prev) => {
-              const streamingId = streamingAssistantIdRef.current;
-              if (!streamingId) {
-                return [...prev, { id: newId(), role: "assistant", content: done }];
-              }
-
-              const next = prev.map((m) => {
-                if (m.id !== streamingId) return m;
-                const nextContent = m.content.length >= done.length ? m.content : done;
-                return { ...m, content: nextContent };
-              });
-              return next;
+              // Extra safety: if the last assistant message already has identical text,
+              // do not append another copy.
+              const last = prev[prev.length - 1];
+              if (last?.role === "assistant" && last.content === done) return prev;
+              return [...prev, { id: newId(), role: "assistant", content: done }];
             });
           }
           streamingAssistantIdRef.current = null;
           chargedThisResponseRef.current = false;
           return;
-        }
-
-        if (typeStr.endsWith(".done") || typeStr === "response.done") {
-          streamingAssistantIdRef.current = null;
-          chargedThisResponseRef.current = false;
         }
       };
 
