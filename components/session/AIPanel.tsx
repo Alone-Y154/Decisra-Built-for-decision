@@ -3,6 +3,9 @@ import { Send, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
 import { useVerdictAiRealtime, type VerdictAiRole } from "@/hooks/useVerdictAiRealtime";
 
 interface AIPanelProps {
@@ -126,48 +129,48 @@ export function AIPanel({
   }, [messages.length]);
 
   const renderFormattedText = (text: string) => {
-    const normalized = text.replace(/\r\n/g, "\n").trimEnd();
-    const blocks = normalized.split(/\n\n+/g);
+    const normalized = text.replace(/\r\n/g, "\n").trim();
 
     return (
       <div className="space-y-3">
-        {blocks.map((block, idx) => {
-          const lines = block.split("\n").filter(Boolean);
-          const isOrdered =
-            lines.length > 1 && lines.every((l) => /^\s*\d+[\.)]\s+/.test(l));
-          const isBulleted =
-            lines.length > 1 && lines.every((l) => /^\s*[-*•]\s+/.test(l));
-
-          if (isOrdered) {
-            return (
-              <ol key={idx} className="list-decimal pl-5 space-y-1">
-                {lines.map((l, i) => (
-                  <li key={i} className="leading-relaxed">
-                    {l.replace(/^\s*\d+[\.)]\s+/, "")}
-                  </li>
-                ))}
-              </ol>
-            );
-          }
-
-          if (isBulleted) {
-            return (
-              <ul key={idx} className="list-disc pl-5 space-y-1">
-                {lines.map((l, i) => (
-                  <li key={i} className="leading-relaxed">
-                    {l.replace(/^\s*[-*•]\s+/, "")}
-                  </li>
-                ))}
-              </ul>
-            );
-          }
-
-          return (
-            <p key={idx} className="whitespace-pre-wrap leading-relaxed">
-              {block}
-            </p>
-          );
-        })}
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          // Do NOT enable raw HTML rendering; we want safe markdown only.
+          components={{
+            p: ({ children }) => (
+              <p className="whitespace-pre-wrap leading-relaxed">{children}</p>
+            ),
+            strong: ({ children }) => (
+              <strong className="font-semibold">{children}</strong>
+            ),
+            em: ({ children }) => <em className="italic">{children}</em>,
+            ol: ({ children }) => <ol className="list-decimal pl-5 space-y-1">{children}</ol>,
+            ul: ({ children }) => <ul className="list-disc pl-5 space-y-1">{children}</ul>,
+            li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+            a: ({ children, href }) => (
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2"
+              >
+                {children}
+              </a>
+            ),
+            code: ({ children }) => (
+              <code className="rounded bg-muted px-1 py-0.5 font-mono text-[12px]">
+                {children}
+              </code>
+            ),
+            pre: ({ children }) => (
+              <pre className="overflow-x-auto rounded bg-muted p-3 text-[12px] leading-relaxed">
+                {children}
+              </pre>
+            ),
+          }}
+        >
+          {normalized}
+        </ReactMarkdown>
       </div>
     );
   };
